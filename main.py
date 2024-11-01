@@ -1,122 +1,115 @@
-# main.py
-
+import os
+import yaml
+import torch
 from ultralytics import YOLO
+from pathlib import Path
+from PIL import Image
 import cv2
 import numpy as np
-import os
-
-# Step 1: Load Dataset Path and Set Configurations
-# Update the path to your dataset and YAML config file
-DATASET_PATH = '/Users/mortzabari/Documents/GitHub/FinalProjectDS/Data'
-CONFIG_PATH = os.path.join(DATASET_PATH, 'data.yaml')  # YAML config file path
+from tqdm import tqdm
 
 
-# Step 2: Initialize and Train the YOLO Model
+# Load configuration parameters
+def load_params(yaml_path):
+    with open(yaml_path, 'r') as file:
+        return yaml.safe_load(file)
+
+
+params = load_params('config/config_params.yaml')
+
+# Paths from params.yaml
+DATA_YAML_PATH = params['data']['data_yaml_path']  # Path to data.yaml
+OUTPUT_SPLIT_DATA_PATH = params['data']['output_split_data_path']
+OUTPUT_PATH = params['data']['output_path']
+
+# Check if output directory exists, if not, create it
+os.makedirs(OUTPUT_PATH, exist_ok=True)
+
+# Step 1: Initialize the YOLO Model
+# Start with a pretrained model or replace with your model checkpoint
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+print(f"======== Using device: {device} ========" )
+model = YOLO('yolo11n.pt').to(device)
+
+
+# Step 2: Load the Dataset
+# YOLO model will automatically use paths in data.yaml for training and validation
 def train_model():
-    """Train the YOLO model on a custom dataset."""
-    model = YOLO('yolo11n.pt')  # Start with a pretrained model or replace with your model checkpoint
-    model.train(data=CONFIG_PATH, epochs=100, imgsz=640, batch=16)
-    model.save("best_model.pt")
-    print("Model training complete and saved as 'best_model.pt'")
+    # Train the model using parameters in data.yaml
+    model.train(data=DATA_YAML_PATH, epochs=10, imgsz=640, project=OUTPUT_PATH, name='train_results')
 
 
-# Step 3: Load Trained Model for Prediction
-def load_trained_model(model_path='best_model.pt'):
-    """Load a trained YOLO model."""
-    return YOLO(model_path)
+# Step 3: Perform Object Detection on Images
+def detect_on_images(image_folder, output_folder):
+    os.makedirs(output_folder, exist_ok=True)
+    for image_name in tqdm(os.listdir(image_folder), desc="Processing Images"):
+        image_path = os.path.join(image_folder, image_name)
+        if image_path.endswith(('.jpg', '.jpeg', '.png')):
+            results = model.predict(source=image_path, save=True, project=output_folder)
+            print(f"Detections saved for {image_name} in {output_folder}")
 
 
-# Nutritional information dictionary for food items (sample values)
-nutritional_info = {
-    'apple_pie': {'calories': 320, 'fat': 14, 'sugar': 20, 'protein': 2},
-    'baby_back_ribs': {'calories': 500, 'fat': 30, 'sugar': 5, 'protein': 40},
-    # Add more items as needed
-}
+# # Step 4: Perform Object Detection on Videos
+# def detect_on_video(video_path, output_folder):
+#     os.makedirs(output_folder, exist_ok=True)
+#     video_name = Path(video_path).stem
+#     output_video_path = os.path.join(output_folder, f"{video_name}_output.mp4")
+#     results = model.predict(source=video_path, save=True, project=output_folder)
+#     print(f"Processed video saved as {output_video_path}")
 
 
-# Step 4: Perform Object Detection on Images
-def detect_food_in_image(image, model):
-    results = model.predict(source=image)
-    for result in results:
-        for box in result.boxes:
-            label = int(box.cls)
-            food_item = model.names[label]
-            if food_item in nutritional_info:
-                nutrition = nutritional_info[food_item]
-                print(f"Food: {food_item}")
-                print(f"Calories: {nutrition['calories']} kcal")
-                print(f"Fat: {nutrition['fat']} g")
-                print(f"Sugar: {nutrition['sugar']} g")
-                print(f"Protein: {nutrition['protein']} g")
-                print("------")
+# Step 5: Answer Research Questions Through Experimentation
+# This could involve logging model performance or interpreting YOLO’s confidence scores on specific classes.
+def analyze_results():
+    results = model.val()  # Validation metrics are computed automatically
+    print(f"Validation results: {results}")
 
-                # Draw bounding box and nutrition on image
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                cv2.rectangle(image, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                nutrition_text = (f"{food_item}\nCalories: {nutrition['calories']} kcal\n"
-                                  f"Fat: {nutrition['fat']} g, Sugar: {nutrition['sugar']} g, "
-                                  f"Protein: {nutrition['protein']} g")
-                cv2.putText(image, nutrition_text, (x1, y1 - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
-    return image
-
-
-# Step 5: Perform Object Detection on Videos
-def detect_food_in_video(video_path, model, save_processed=False):
-    video = cv2.VideoCapture(video_path)
-    if not video.isOpened():
-        raise FileNotFoundError(f"Video at {video_path} not found or can't be opened.")
-
-    frame_width = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
-    frame_height = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = int(video.get(cv2.CAP_PROP_FPS))
-
-    if save_processed:
-        output_path = 'processed_video.avi'
-        output_video = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'XVID'), fps, (frame_width, frame_height))
-
-    while True:
-        ret, frame = video.read()
-        if not ret:
-            break
-        processed_frame = detect_food_in_image(frame, model)
-
-        cv2.imshow('Detected Food', processed_frame)
-        if save_processed:
-            output_video.write(processed_frame)
-
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    video.release()
-    if save_processed:
-        output_video.release()
-    cv2.destroyAllWindows()
+# Optional: Save Processed Video with Detections (using OpenCV for additional customization)
+# def save_processed_video(input_video_path, output_video_path):
+#     cap = cv2.VideoCapture(input_video_path)
+#     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+#     fps = cap.get(cv2.CAP_PROP_FPS)
+#     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+#     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+#     out = cv2.VideoWriter(output_video_path, fourcc, fps, (frame_width, frame_height))
+#
+#     while cap.isOpened():
+#         ret, frame = cap.read()
+#         if not ret:
+#             break
+#
+#         # Perform object detection on each frame
+#         results = model.predict(frame)
+#         annotated_frame = np.squeeze(results.render())  # Get annotated frame
+#         out.write(annotated_frame)
+#
+#     cap.release()
+#     out.release()
+#     print(f"Processed video saved at {output_video_path}")
 
 
-# Main Execution
+# Run steps
 if __name__ == "__main__":
-    # Check if a model has been trained, if not, train the model
-    if not os.path.exists("best_model.pt"):
-        print("Training model as 'best_model.pt' not found.")
-        train_model()
-    else:
-        print("'best_model.pt' found. Skipping training.")
+    # Train the model
+    print("Training the model...")
+    train_model()
 
-    # Load the trained model
-    model = load_trained_model("best_model.pt")
+    # Image detection
+    test_images_folder = os.path.join(OUTPUT_SPLIT_DATA_PATH, 'test')
+    print("Detecting objects on test images...")
+    detect_on_images(test_images_folder, os.path.join(OUTPUT_PATH, 'image_detections'))
 
-    # Example usage for image detection
-    image_path = os.path.join(DATASET_PATH, 'images', 'apple_pie', 'img1.jpg')  # Adjust as needed
-    image = cv2.imread(image_path)
-    if image is None:
-        raise FileNotFoundError(f"Image at {image_path} not found.")
+    # # Video detection (if there are test videos)
+    # test_video_path = '/path/to/test_video.mp4'  # Update with actual test video path
+    # print("Detecting objects on test video...")
+    # detect_on_video(test_video_path, os.path.join(OUTPUT_PATH, 'video_detections'))
 
-    processed_image = detect_food_in_image(image, model)
-    cv2.imshow("Processed Image", processed_image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+    # Analyze results
+    print("Analyzing results...")
+    analyze_results()
 
-    # Example usage for video detection (press 'q' to quit video)
-    video_path = os.path.join(DATASET_PATH, 'your_video.mp4')  # Update with your video file
-    detect_food_in_video(video_path, model, save_processed=True)
+    # # Optional: Save processed video with detections
+    # processed_video_output_path = os.path.join(OUTPUT_PATH, 'processed_video.mp4')
+    # save_processed_video(test_video_path, processed_video_output_path)
+
+    print("All steps completed.")
